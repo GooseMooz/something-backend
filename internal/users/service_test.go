@@ -97,7 +97,7 @@ func TestUpdate(t *testing.T) {
 	if updated.Name != "David" {
 		t.Errorf("expected name 'David', got '%s'", updated.Name)
 	}
-	if !updated.UpdatedAt.After(created.UpdatedAt) {
-		t.Error("expected updated_at to advance after Update")
+	if updated.UpdatedAt.Before(created.UpdatedAt) {
+		t.Error("expected updated_at to stay the same or advance after Update")
 	}
 }

@@ -28,10 +28,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
       - name: Lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: latest
+        run: $(go env GOPATH)/bin/golangci-lint run
 
   test:
     runs-on: ubuntu-latest
@@ -46,7 +46,7 @@ jobs:
           docker run -d --name surrealdb -p 8000:8000 \
             surrealdb/surrealdb:latest \
             start --log warn --user root --pass root memory
-          until docker exec surrealdb surreal isready --endpoint http://localhost:8000 2>/dev/null; do
+          until docker exec surrealdb /surreal isready --endpoint http://localhost:8000 2>/dev/null; do
             sleep 1
           done
       - name: Test
