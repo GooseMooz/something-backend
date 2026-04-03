@@ -1,0 +1,29 @@
+services:
+  api:
+    build: .
+    ports:
+      - "${PORT}:${PORT}"
+    env_file:
+      - ./.env
+    depends_on:
+      surrealdb:
+        condition: service_healthy
+
+  surrealdb:
+    image: surrealdb/surrealdb:latest
+    user: root
+    command: start --log warn --user ${SURREAL_USER} --pass ${SURREAL_PASSWORD} surrealkv:/data/db
+    healthcheck:
+      test: ["CMD", "/surreal", "isready", "--endpoint", "http://localhost:8000"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "8000:8000"
+    volumes:
+      - surreal_data:/data
+    env_file:
+      - ./.env
+
+volumes:
+  surreal_data:
