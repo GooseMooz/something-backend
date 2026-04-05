@@ -39,9 +39,9 @@ func NewSMTPMailer(cfg *config.Config) (*SMTPMailer, error) {
 }
 
 func (m *SMTPMailer) SendPasswordReset(ctx context.Context, to, resetURL string) error {
-	subject := "Reset your password"
-	textBody := fmt.Sprintf("Reset your password:\r\n\r\n%s\r\n\r\nIf you did not request this, you can ignore this email.\r\n", resetURL)
-	htmlBody := fmt.Sprintf(`<html><body><p>Reset your password:</p><p><a href="%s">%s</a></p><p>If you did not request this, you can ignore this email.</p></body></html>`, resetURL, resetURL)
+	subject := "Something.ca - Password Recovery :O"
+	textBody := fmt.Sprintf("Hiiii! Here you go, reset your password:\r\n\r\n%s\r\n\r\nIf you did not request this, you can ignore this email.\r\n", resetURL)
+	htmlBody := fmt.Sprintf(`<html><body><p>Hiiii! Here you go, reset your password:</p><p><a href="%s">%s</a></p><p>If you did not request this, you can ignore this email.</p></body></html>`, resetURL, resetURL)
 
 	boundary := fmt.Sprintf("boundary-%d", time.Now().UnixNano())
 	msg := strings.Join([]string{
