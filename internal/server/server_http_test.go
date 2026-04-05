@@ -575,6 +575,84 @@ func TestUserChangePasswordRevokesRefreshTokens(t *testing.T) {
 	}
 }
 
+func TestOrgChangePasswordRevokesRefreshTokens(t *testing.T) {
+	router := newRouter()
+	email := fmt.Sprintf("change-password-org-%d@example.com", time.Now().UnixNano())
+	oldPassword := "secret123"
+	newPassword := "newsecret456"
+
+	registerRec := doJSONRequest(t, router, http.MethodPost, "/auth/org/register", map[string]string{
+		"name":     "Change Password Org",
+		"email":    email,
+		"password": oldPassword,
+		"location": "Vancouver",
+	}, "", "")
+	if registerRec.Code != http.StatusCreated {
+		t.Fatalf("expected org register to succeed, got %d: %s", registerRec.Code, registerRec.Body.String())
+	}
+
+	loginRec := doJSONRequest(t, router, http.MethodPost, "/auth/org/login", map[string]string{
+		"email":    email,
+		"password": oldPassword,
+	}, "", "")
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("expected org login to succeed, got %d: %s", loginRec.Code, loginRec.Body.String())
+	}
+
+	var loginBody map[string]string
+	if err := json.Unmarshal(loginRec.Body.Bytes(), &loginBody); err != nil {
+		t.Fatalf("unmarshal org login body: %v", err)
+	}
+	token := loginBody["access_token"]
+	if token == "" {
+		t.Fatal("expected access token on org login")
+	}
+
+	var createdOrg orgs.Org
+	if err := json.Unmarshal(registerRec.Body.Bytes(), &createdOrg); err != nil {
+		t.Fatalf("unmarshal org register body: %v", err)
+	}
+	orgID := createdOrg.ID.ID.(string)
+
+	refreshCookie := cookieByName(loginRec.Result().Cookies(), "refresh_token")
+	if refreshCookie == nil || refreshCookie.Value == "" {
+		t.Fatal("expected refresh token cookie on org login")
+	}
+
+	changeRec := doJSONRequestWithCookies(t, router, http.MethodPut, "/orgs/"+orgID+"/password", map[string]string{
+		"current_password": oldPassword,
+		"new_password":     newPassword,
+	}, token, []*http.Cookie{refreshCookie})
+	if changeRec.Code != http.StatusOK {
+		t.Fatalf("expected org password change to succeed, got %d: %s", changeRec.Code, changeRec.Body.String())
+	}
+	cleared := cookieByName(changeRec.Result().Cookies(), "refresh_token")
+	if cleared == nil || cleared.MaxAge != -1 {
+		t.Fatal("expected org password change to clear refresh token cookie")
+	}
+
+	reuseRefreshRec := doJSONRequestWithCookies(t, router, http.MethodPost, "/auth/refresh", nil, "", []*http.Cookie{refreshCookie})
+	if reuseRefreshRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected revoked org refresh token to fail, got %d: %s", reuseRefreshRec.Code, reuseRefreshRec.Body.String())
+	}
+
+	oldLoginRec := doJSONRequest(t, router, http.MethodPost, "/auth/org/login", map[string]string{
+		"email":    email,
+		"password": oldPassword,
+	}, "", "")
+	if oldLoginRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected old org password login to fail, got %d: %s", oldLoginRec.Code, oldLoginRec.Body.String())
+	}
+
+	newLoginRec := doJSONRequest(t, router, http.MethodPost, "/auth/org/login", map[string]string{
+		"email":    email,
+		"password": newPassword,
+	}, "", "")
+	if newLoginRec.Code != http.StatusOK {
+		t.Fatalf("expected new org password login to succeed, got %d: %s", newLoginRec.Code, newLoginRec.Body.String())
+	}
+}
+
 func TestForgotAndResetPasswordFlow(t *testing.T) {
 	testMailer := &stubMailer{}
 	router := newRouterWithMailer(testMailer)
@@ -661,5 +739,94 @@ func TestForgotAndResetPasswordFlow(t *testing.T) {
 	reuseRefreshRec := doJSONRequestWithCookies(t, router, http.MethodPost, "/auth/refresh", nil, "", []*http.Cookie{refreshCookie})
 	if reuseRefreshRec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected old refresh token to be revoked, got %d: %s", reuseRefreshRec.Code, reuseRefreshRec.Body.String())
+	}
+}
+
+func TestForgotAndResetPasswordFlowForOrg(t *testing.T) {
+	testMailer := &stubMailer{}
+	router := newRouterWithMailer(testMailer)
+	email := fmt.Sprintf("forgot-password-org-%d@example.com", time.Now().UnixNano())
+	oldPassword := "secret123"
+	newPassword := "newsecret456"
+
+	registerRec := doJSONRequest(t, router, http.MethodPost, "/auth/org/register", map[string]string{
+		"name":     "Forgot Password Org",
+		"email":    email,
+		"password": oldPassword,
+		"location": "Vancouver",
+	}, "", "")
+	if registerRec.Code != http.StatusCreated {
+		t.Fatalf("expected org register to succeed, got %d: %s", registerRec.Code, registerRec.Body.String())
+	}
+
+	loginRec := doJSONRequest(t, router, http.MethodPost, "/auth/org/login", map[string]string{
+		"email":    email,
+		"password": oldPassword,
+	}, "", "")
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("expected initial org login to succeed, got %d: %s", loginRec.Code, loginRec.Body.String())
+	}
+	refreshCookie := cookieByName(loginRec.Result().Cookies(), "refresh_token")
+	if refreshCookie == nil || refreshCookie.Value == "" {
+		t.Fatal("expected refresh token cookie on org login")
+	}
+
+	forgotRec := doJSONRequest(t, router, http.MethodPost, "/auth/forgot-password", map[string]string{
+		"email": email,
+	}, "", "")
+	if forgotRec.Code != http.StatusOK {
+		t.Fatalf("expected forgot password to succeed, got %d: %s", forgotRec.Code, forgotRec.Body.String())
+	}
+	if len(testMailer.sent) != 1 {
+		t.Fatalf("expected one password reset email, got %d", len(testMailer.sent))
+	}
+
+	resetURL := testMailer.sent[0].resetURL
+	token := ""
+	if idx := strings.Index(resetURL, "token="); idx != -1 {
+		token = resetURL[idx+len("token="):]
+	}
+	if token == "" {
+		t.Fatalf("expected reset token in reset URL, got %s", resetURL)
+	}
+
+	resetRec := doJSONRequestWithCookies(t, router, http.MethodPost, "/auth/reset-password", map[string]string{
+		"token":        token,
+		"new_password": newPassword,
+	}, "", []*http.Cookie{refreshCookie})
+	if resetRec.Code != http.StatusOK {
+		t.Fatalf("expected reset password to succeed, got %d: %s", resetRec.Code, resetRec.Body.String())
+	}
+
+	oldLoginRec := doJSONRequest(t, router, http.MethodPost, "/auth/org/login", map[string]string{
+		"email":    email,
+		"password": oldPassword,
+	}, "", "")
+	if oldLoginRec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected old org password login to fail, got %d: %s", oldLoginRec.Code, oldLoginRec.Body.String())
+	}
+
+	newLoginRec := doJSONRequest(t, router, http.MethodPost, "/auth/org/login", map[string]string{
+		"email":    email,
+		"password": newPassword,
+	}, "", "")
+	if newLoginRec.Code != http.StatusOK {
+		t.Fatalf("expected new org password login to succeed, got %d: %s", newLoginRec.Code, newLoginRec.Body.String())
+	}
+
+	var loginBody map[string]string
+	if err := json.Unmarshal(newLoginRec.Body.Bytes(), &loginBody); err != nil {
+		t.Fatalf("unmarshal org login body: %v", err)
+	}
+	tokenAfterReset := loginBody["access_token"]
+	if tokenAfterReset == "" {
+		t.Fatal("expected access token on org login after reset")
+	}
+	claims, err := auth.ValidateToken(tokenAfterReset, testCfg)
+	if err != nil {
+		t.Fatalf("validate org token after reset: %v", err)
+	}
+	if !strings.HasPrefix(claims.UserID, "orgs:") {
+		t.Fatalf("expected org token after reset, got %q", claims.UserID)
 	}
 }
