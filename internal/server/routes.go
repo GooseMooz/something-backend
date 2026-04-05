@@ -8,6 +8,7 @@ import (
 	"github.com/goosemooz/something-backend/internal/applications"
 	"github.com/goosemooz/something-backend/internal/auth"
 	"github.com/goosemooz/something-backend/internal/db"
+	"github.com/goosemooz/something-backend/internal/mail"
 	"github.com/goosemooz/something-backend/internal/opportunities"
 	"github.com/goosemooz/something-backend/internal/orgs"
 	"github.com/goosemooz/something-backend/internal/ratelimit"
@@ -15,9 +16,10 @@ import (
 	"github.com/goosemooz/something-backend/internal/users"
 )
 
-func SetupRoutes(r chi.Router, database *db.DB, cfg *config.Config, store *storage.Storage) {
+func SetupRoutes(r chi.Router, database *db.DB, cfg *config.Config, store *storage.Storage, mailer mail.Mailer) {
 	sessionManager := auth.NewSessionManager(database, cfg)
-	authHandler := auth.NewHandler(sessionManager)
+	resetManager := auth.NewPasswordResetManager(database, cfg, mailer, sessionManager)
+	authHandler := auth.NewHandler(sessionManager, resetManager)
 	userHandler := users.NewHandler(users.NewService(database), cfg, store, sessionManager)
 	orgHandler := orgs.NewHandler(orgs.NewService(database), cfg, store, sessionManager)
 	appService := applications.NewService(database)
@@ -29,6 +31,8 @@ func SetupRoutes(r chi.Router, database *db.DB, cfg *config.Config, store *stora
 		r.With(ratelimit.NewIPRateLimiter(5, time.Minute)).Post("/register", userHandler.Register)
 		r.With(ratelimit.NewIPRateLimiter(10, time.Minute)).Post("/login", userHandler.Login)
 		r.With(ratelimit.NewIPRateLimiter(30, time.Minute)).Post("/refresh", authHandler.Refresh)
+		r.With(ratelimit.NewIPRateLimiter(5, time.Minute)).Post("/forgot-password", authHandler.ForgotPassword)
+		r.With(ratelimit.NewIPRateLimiter(10, time.Minute)).Post("/reset-password", authHandler.ResetPassword)
 		r.Post("/logout", authHandler.Logout)
 
 		r.Route("/org", func(r chi.Router) {
@@ -45,6 +49,7 @@ func SetupRoutes(r chi.Router, database *db.DB, cfg *config.Config, store *stora
 			r.Use(auth.RequireAuth(cfg))
 			r.Use(auth.RequireUserAuth)
 			r.Put("/{id}", userHandler.Update)
+			r.Put("/{id}/password", userHandler.ChangePassword)
 			r.Post("/{id}/pfp", userHandler.UploadPFP)
 			r.Post("/{id}/resume", userHandler.UploadResume)
 		})

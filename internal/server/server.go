@@ -9,6 +9,7 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/goosemooz/something-backend/config"
 	"github.com/goosemooz/something-backend/internal/db"
+	"github.com/goosemooz/something-backend/internal/mail"
 	"github.com/goosemooz/something-backend/internal/storage"
 )
 
@@ -17,17 +18,19 @@ type Server struct {
 	cfg    *config.Config
 	db     *db.DB
 	store  *storage.Storage
+	mailer mail.Mailer
 }
 
-func New(cfg *config.Config, database *db.DB, store *storage.Storage) *Server {
+func New(cfg *config.Config, database *db.DB, store *storage.Storage, mailer mail.Mailer) *Server {
 	s := &Server{
 		router: chi.NewRouter(),
 		cfg:    cfg,
 		db:     database,
 		store:  store,
+		mailer: mailer,
 	}
 	s.setupMiddleware()
-	SetupRoutes(s.router, database, cfg, store)
+	SetupRoutes(s.router, database, cfg, store, mailer)
 	return s
 }
 

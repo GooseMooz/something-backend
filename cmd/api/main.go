@@ -6,6 +6,7 @@ import (
 
 	"github.com/goosemooz/something-backend/config"
 	"github.com/goosemooz/something-backend/internal/db"
+	"github.com/goosemooz/something-backend/internal/mail"
 	"github.com/goosemooz/something-backend/internal/server"
 	"github.com/goosemooz/something-backend/internal/storage"
 
@@ -33,7 +34,16 @@ func main() {
 		log.Fatalf("S3 init failed: %v", err)
 	}
 
-	srv := server.New(cfg, database, store)
+	var mailer mail.Mailer
+	if cfg.SMTPHost != "" && cfg.SMTPUsername != "" && cfg.SMTPPassword != "" && cfg.SMTPFrom != "" && cfg.AppBaseURL != "" {
+		smtpMailer, err := mail.NewSMTPMailer(cfg)
+		if err != nil {
+			log.Fatalf("SMTP init failed: %v", err)
+		}
+		mailer = smtpMailer
+	}
+
+	srv := server.New(cfg, database, store, mailer)
 	log.Printf("Server starting on port %s", cfg.Port)
 	if err := srv.Start(); err != nil {
 		log.Fatalf("Server failed: %v", err)

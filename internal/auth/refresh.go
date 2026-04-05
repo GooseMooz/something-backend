@@ -136,6 +136,24 @@ func (m *SessionManager) Logout(ctx context.Context, w http.ResponseWriter, r *h
 	return nil
 }
 
+func (m *SessionManager) RevokeAllForUser(ctx context.Context, userID string) error {
+	now := m.now()
+	if _, err := surrealdb.Query[[]map[string]any](ctx, m.db.Client,
+		"UPDATE refresh_tokens SET revoked_at = $now WHERE user_id = $user_id AND revoked_at = NONE",
+		map[string]any{
+			"now":     now,
+			"user_id": userID,
+		},
+	); err != nil {
+		return fmt.Errorf("revoke all refresh tokens: %w", err)
+	}
+	return nil
+}
+
+func (m *SessionManager) ClearRefreshCookie(w http.ResponseWriter) {
+	clearRefreshCookie(w, m.cfg)
+}
+
 func (m *SessionManager) getRefreshToken(ctx context.Context, tokenHash string) (*RefreshToken, error) {
 	results, err := surrealdb.Query[[]RefreshToken](ctx, m.db.Client,
 		"SELECT * FROM refresh_tokens WHERE token_hash = $token_hash LIMIT 1",

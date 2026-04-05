@@ -19,6 +19,7 @@ type Config struct {
 	JWTSecret           string
 	AccessTokenTTL      time.Duration
 	RefreshTokenTTL     time.Duration
+	PasswordResetTTL    time.Duration
 	RefreshCookieSecure bool
 
 	S3PDFBucket string
@@ -26,6 +27,13 @@ type Config struct {
 	S3Region    string
 	S3AccessKey string
 	S3SecretKey string
+
+	SMTPHost     string
+	SMTPPort     int
+	SMTPUsername string
+	SMTPPassword string
+	SMTPFrom     string
+	AppBaseURL   string
 }
 
 func Load() *Config {
@@ -41,6 +49,7 @@ func Load() *Config {
 		JWTSecret:           mustGetEnv("JWT_SECRET"),
 		AccessTokenTTL:      getDurationEnv("ACCESS_TOKEN_TTL", 15*time.Minute),
 		RefreshTokenTTL:     getDurationEnv("REFRESH_TOKEN_TTL", 30*24*time.Hour),
+		PasswordResetTTL:    getDurationEnv("PASSWORD_RESET_TTL", time.Hour),
 		RefreshCookieSecure: getBoolEnv("REFRESH_COOKIE_SECURE", false),
 
 		S3PDFBucket: mustGetEnv("S3_PDF_BUCKET"),
@@ -48,6 +57,13 @@ func Load() *Config {
 		S3Region:    mustGetEnv("S3_REGION"),
 		S3AccessKey: mustGetEnv("S3_ACCESS_KEY"),
 		S3SecretKey: mustGetEnv("S3_SECRET_KEY"),
+
+		SMTPHost:     os.Getenv("SMTP_HOST"),
+		SMTPPort:     getIntEnv("SMTP_PORT", 587),
+		SMTPUsername: os.Getenv("SMTP_USERNAME"),
+		SMTPPassword: os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:     os.Getenv("SMTP_FROM"),
+		AppBaseURL:   os.Getenv("APP_BASE_URL"),
 	}
 	return cfg
 }
@@ -80,6 +96,18 @@ func getBoolEnv(key string, fallback bool) bool {
 	parsed, err := strconv.ParseBool(v)
 	if err != nil {
 		panic(fmt.Sprintf("Invalid bool env var %q: %v", key, err))
+	}
+	return parsed
+}
+
+func getIntEnv(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(v)
+	if err != nil {
+		panic(fmt.Sprintf("Invalid int env var %q: %v", key, err))
 	}
 	return parsed
 }
