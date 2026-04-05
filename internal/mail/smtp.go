@@ -40,8 +40,45 @@ func NewSMTPMailer(cfg *config.Config) (*SMTPMailer, error) {
 
 func (m *SMTPMailer) SendPasswordReset(ctx context.Context, to, resetURL string) error {
 	subject := "Something.ca - Password Recovery :O"
-	textBody := fmt.Sprintf("Hiiii! Here you go, reset your password:\r\n\r\n%s\r\n\r\nIf you did not request this, you can ignore this email.\r\n", resetURL)
-	htmlBody := fmt.Sprintf(`<html><body><p>Hiiii! Here you go, reset your password:</p><p><a href="%s">%s</a></p><p>If you did not request this, you can ignore this email.</p></body></html>`, resetURL, resetURL)
+	textBody := fmt.Sprintf("Hiiii!\r\n\r\nWe got a request to reset your password for Something Matters.\r\n\r\nReset it here:\r\n%s\r\n\r\nIf you didn't request this, you can safely ignore this email.\r\n", resetURL)
+	htmlBody := fmt.Sprintf(`<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:0;background-color:#ddd0bc;font-family:Arial,sans-serif;color:#2f2a24;">
+    <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="background-color:#ddd0bc;padding:32px 16px;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%%" cellspacing="0" cellpadding="0" style="max-width:560px;background-color:#f7f1e8;border:1px solid #cabda9;border-radius:18px;overflow:hidden;">
+            <tr>
+              <td style="padding:0;">
+                <div style="height:10px;background-color:#74ba92;"></div>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:32px 32px 20px 32px;">
+                <div style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#6d6256;font-weight:700;">Something Matters</div>
+                <h1 style="margin:14px 0 12px 0;font-size:28px;line-height:1.2;color:#1f3f31;">Password Reset</h1>
+                <p style="margin:0 0 14px 0;font-size:16px;line-height:1.6;color:#3e3832;">Hiiii! We got a request to reset your password.</p>
+                <p style="margin:0 0 24px 0;font-size:16px;line-height:1.6;color:#3e3832;">Use the button below to choose a new one.</p>
+                <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 24px 0;">
+                  <tr>
+                    <td align="center" bgcolor="#74ba92" style="border-radius:999px;">
+                      <a href="%s" style="display:inline-block;padding:14px 24px;font-size:15px;font-weight:700;color:#163126;text-decoration:none;">Reset Password</a>
+                    </td>
+                  </tr>
+                </table>
+                <p style="margin:0 0 10px 0;font-size:14px;line-height:1.6;color:#5d554d;">If the button doesn't work, copy and paste this link into your browser:</p>
+                <p style="margin:0 0 24px 0;font-size:14px;line-height:1.6;word-break:break-all;"><a href="%s" style="color:#2d6f53;text-decoration:underline;">%s</a></p>
+                <div style="padding:16px 18px;background-color:#efe5d8;border-radius:14px;font-size:14px;line-height:1.6;color:#5d554d;">
+                  If you didn't request this, you can safely ignore this email. Your password won't change unless you complete the reset.
+                </div>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`, resetURL, resetURL, resetURL)
 
 	boundary := fmt.Sprintf("boundary-%d", time.Now().UnixNano())
 	msg := strings.Join([]string{
