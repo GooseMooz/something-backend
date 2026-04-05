@@ -51,6 +51,11 @@ type updateRequest struct {
 	LinkedIn   *string  `json:"linkedin"`
 }
 
+type changePasswordRequest struct {
+	CurrentPassword string `json:"current_password"`
+	NewPassword     string `json:"new_password"`
+}
+
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -196,6 +201,74 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, user)
+}
+
+func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	claims := auth.GetClaims(r)
+	if claims.UserID != "users:"+id {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	var req changePasswordRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.CurrentPassword == "" || req.NewPassword == "" {
+		writeError(w, http.StatusBadRequest, "current_password and new_password are required")
+		return
+	}
+	if len(req.NewPassword) < 8 {
+		writeError(w, http.StatusBadRequest, "new_password must be at least 8 characters")
+		return
+	}
+	if req.CurrentPassword == req.NewPassword {
+		writeError(w, http.StatusBadRequest, "new_password must be different from current_password")
+		return
+	}
+
+	user, err := h.service.GetByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if user == nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if !auth.CheckPassword(user.PasswordHash, req.CurrentPassword) {
+		writeError(w, http.StatusUnauthorized, "invalid current password")
+		return
+	}
+
+	hash, err := auth.HashPassword(req.NewPassword)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	updated, err := h.service.Update(r.Context(), id, map[string]any{"password_hash": hash})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if updated == nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	if err := h.sessions.RevokeAllForUser(r.Context(), updated.ID.String()); err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	h.sessions.ClearRefreshCookie(w)
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message": "password updated, please sign in again",
+	})
 }
 
 func (h *Handler) UploadPFP(w http.ResponseWriter, r *http.Request) {

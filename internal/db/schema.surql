@@ -75,3 +75,12 @@ DEFINE FIELD IF NOT EXISTS created_at ON refresh_tokens TYPE datetime;
 DEFINE FIELD IF NOT EXISTS revoked_at ON refresh_tokens TYPE option<datetime>;
 DEFINE FIELD IF NOT EXISTS replaced_by_hash ON refresh_tokens TYPE string DEFAULT '';
 DEFINE INDEX IF NOT EXISTS refresh_tokens_hash ON refresh_tokens FIELDS token_hash UNIQUE;
+
+-- Password Reset Tokens
+DEFINE TABLE IF NOT EXISTS password_resets SCHEMAFULL;
+DEFINE FIELD IF NOT EXISTS token_hash ON password_resets TYPE string;
+DEFINE FIELD IF NOT EXISTS user_id ON password_resets TYPE string;
+DEFINE FIELD IF NOT EXISTS expires_at ON password_resets TYPE datetime;
+DEFINE FIELD IF NOT EXISTS created_at ON password_resets TYPE datetime;
+DEFINE FIELD IF NOT EXISTS used_at ON password_resets TYPE option<datetime>;
+DEFINE INDEX IF NOT EXISTS password_resets_hash ON password_resets FIELDS token_hash UNIQUE;
