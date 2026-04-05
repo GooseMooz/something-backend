@@ -39,6 +39,16 @@ type passwordResetUser struct {
 	Email string         `json:"email"`
 }
 
+type passwordResetOrg struct {
+	ID    types.RecordID `json:"id"`
+	Email string         `json:"email"`
+}
+
+type passwordResetAccount struct {
+	ID    string
+	Email string
+}
+
 type PasswordResetManager struct {
 	db       *db.DB
 	cfg      *config.Config
@@ -62,11 +72,11 @@ func (m *PasswordResetManager) SendReset(ctx context.Context, email string) erro
 		return ErrPasswordResetDisabled
 	}
 
-	user, err := m.getUserByEmail(ctx, email)
+	account, err := m.getAccountByEmail(ctx, email)
 	if err != nil {
 		return err
 	}
-	if user == nil {
+	if account == nil {
 		return nil
 	}
 
@@ -78,7 +88,7 @@ func (m *PasswordResetManager) SendReset(ctx context.Context, email string) erro
 	now := m.now()
 	if _, err := surrealdb.Create[passwordResetToken](ctx, m.db.Client, "password_resets", map[string]any{
 		"token_hash": hashedToken,
-		"user_id":    user.ID.String(),
+		"user_id":    account.ID,
 		"expires_at": now.Add(m.cfg.PasswordResetTTL),
 		"created_at": now,
 	}); err != nil {
@@ -86,7 +96,7 @@ func (m *PasswordResetManager) SendReset(ctx context.Context, email string) erro
 	}
 
 	resetURL := strings.TrimRight(m.cfg.AppBaseURL, "/") + "/reset-password?token=" + url.QueryEscape(rawToken)
-	if err := m.mailer.SendPasswordReset(ctx, user.Email, resetURL); err != nil {
+	if err := m.mailer.SendPasswordReset(ctx, account.Email, resetURL); err != nil {
 		return fmt.Errorf("send password reset email: %w", err)
 	}
 	return nil
@@ -103,9 +113,13 @@ func (m *PasswordResetManager) ResetPassword(ctx context.Context, rawToken, newP
 		return fmt.Errorf("hash password: %w", err)
 	}
 
-	userID := strings.TrimPrefix(record.UserID, "users:")
-	userRID := models.NewRecordID("users", userID)
-	if _, err := surrealdb.Merge[map[string]any](ctx, m.db.Client, userRID, map[string]any{
+	table, id, ok := splitRecordID(record.UserID)
+	if !ok {
+		return fmt.Errorf("invalid password reset subject: %q", record.UserID)
+	}
+
+	accountRID := models.NewRecordID(table, id)
+	if _, err := surrealdb.Merge[map[string]any](ctx, m.db.Client, accountRID, map[string]any{
 		"password_hash": hash,
 		"updated_at":    m.now(),
 	}); err != nil {
@@ -141,6 +155,41 @@ func (m *PasswordResetManager) getUserByEmail(ctx context.Context, email string)
 	return &user, nil
 }
 
+func (m *PasswordResetManager) getOrgByEmail(ctx context.Context, email string) (*passwordResetOrg, error) {
+	results, err := surrealdb.Query[[]passwordResetOrg](ctx, m.db.Client,
+		"SELECT * FROM orgs WHERE email = $email LIMIT 1",
+		map[string]any{"email": email})
+	if err != nil {
+		return nil, fmt.Errorf("query org by email: %w", err)
+	}
+	if len(*results) == 0 || len((*results)[0].Result) == 0 {
+		return nil, nil
+	}
+
+	org := (*results)[0].Result[0]
+	return &org, nil
+}
+
+func (m *PasswordResetManager) getAccountByEmail(ctx context.Context, email string) (*passwordResetAccount, error) {
+	user, err := m.getUserByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if user != nil {
+		return &passwordResetAccount{ID: user.ID.String(), Email: user.Email}, nil
+	}
+
+	org, err := m.getOrgByEmail(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if org != nil {
+		return &passwordResetAccount{ID: org.ID.String(), Email: org.Email}, nil
+	}
+
+	return nil, nil
+}
+
 func (m *PasswordResetManager) getPasswordResetToken(ctx context.Context, tokenHash string) (*passwordResetToken, error) {
 	results, err := surrealdb.Query[[]passwordResetToken](ctx, m.db.Client,
 		"SELECT * FROM password_resets WHERE token_hash = $token_hash LIMIT 1",
@@ -174,4 +223,12 @@ func generatePasswordResetToken() (raw string, hashed string, err error) {
 func hashPasswordResetToken(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])
+}
+
+func splitRecordID(full string) (table string, id string, ok bool) {
+	parts := strings.SplitN(full, ":", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }

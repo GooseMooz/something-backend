@@ -66,6 +66,7 @@ func SetupRoutes(r chi.Router, database *db.DB, cfg *config.Config, store *stora
 			r.Use(auth.RequireOrgAuth)
 			r.Get("/{id}/applications", appHandler.ListByOrg)
 			r.Put("/{id}", orgHandler.Update)
+			r.Put("/{id}/password", orgHandler.ChangePassword)
 			r.Post("/{id}/pfp", orgHandler.UploadPFP)
 		})
 	})
