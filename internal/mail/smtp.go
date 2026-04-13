@@ -39,8 +39,8 @@ func NewSMTPMailer(cfg *config.Config) (*SMTPMailer, error) {
 }
 
 func (m *SMTPMailer) SendPasswordReset(ctx context.Context, to, resetURL string) error {
-	subject := "Something.ca - Password Recovery :O"
-	textBody := fmt.Sprintf("Hiiii!\r\n\r\nWe got a request to reset your password for Something Matters.\r\n\r\nReset it here:\r\n%s\r\n\r\nIf you didn't request this, you can safely ignore this email.\r\n", resetURL)
+	subject := "Reset your Something Matters password"
+	textBody := fmt.Sprintf("We received a request to reset the password for your Something Matters account.\r\n\r\nReset your password:\r\n%s\r\n\r\nIf you didn't request this, you can ignore this email. Your password will not change unless you complete the reset.\r\n", resetURL)
 	htmlBody := fmt.Sprintf(`<!doctype html>
 <html lang="en">
   <body style="margin:0;padding:0;background-color:#ddd0bc;font-family:Arial,sans-serif;color:#2f2a24;">
@@ -57,8 +57,8 @@ func (m *SMTPMailer) SendPasswordReset(ctx context.Context, to, resetURL string)
               <td style="padding:32px 32px 20px 32px;">
                 <div style="font-size:13px;letter-spacing:0.12em;text-transform:uppercase;color:#6d6256;font-weight:700;">Something Matters</div>
                 <h1 style="margin:14px 0 12px 0;font-size:28px;line-height:1.2;color:#1f3f31;">Password Reset</h1>
-                <p style="margin:0 0 14px 0;font-size:16px;line-height:1.6;color:#3e3832;">Hiiii! We got a request to reset your password.</p>
-                <p style="margin:0 0 24px 0;font-size:16px;line-height:1.6;color:#3e3832;">Use the button below to choose a new one.</p>
+                <p style="margin:0 0 14px 0;font-size:16px;line-height:1.6;color:#3e3832;">We received a request to reset the password for your account.</p>
+                <p style="margin:0 0 24px 0;font-size:16px;line-height:1.6;color:#3e3832;">Use the button below to choose a new password.</p>
                 <table role="presentation" cellspacing="0" cellpadding="0" style="margin:0 0 24px 0;">
                   <tr>
                     <td align="center" bgcolor="#74ba92" style="border-radius:999px;">
@@ -81,10 +81,19 @@ func (m *SMTPMailer) SendPasswordReset(ctx context.Context, to, resetURL string)
 </html>`, resetURL, resetURL, resetURL)
 
 	boundary := fmt.Sprintf("boundary-%d", time.Now().UnixNano())
+	messageIDDomain := m.host
+	if parts := strings.Split(strings.TrimSpace(m.from), "@"); len(parts) == 2 && parts[1] != "" {
+		messageIDDomain = parts[1]
+	}
+	messageID := fmt.Sprintf("<password-reset-%d@%s>", time.Now().UnixNano(), messageIDDomain)
 	msg := strings.Join([]string{
 		"From: " + m.from,
 		"To: " + to,
 		"Subject: " + subject,
+		"Date: " + time.Now().UTC().Format(time.RFC1123Z),
+		"Message-ID: " + messageID,
+		"Auto-Submitted: auto-generated",
+		"X-Auto-Response-Suppress: All",
 		"MIME-Version: 1.0",
 		fmt.Sprintf(`Content-Type: multipart/alternative; boundary="%s"`, boundary),
 		"",
