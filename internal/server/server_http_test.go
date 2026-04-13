@@ -687,6 +687,13 @@ func TestForgotAndResetPasswordFlow(t *testing.T) {
 	if forgotRec.Code != http.StatusOK {
 		t.Fatalf("expected forgot password to succeed, got %d: %s", forgotRec.Code, forgotRec.Body.String())
 	}
+	var forgotResp map[string]string
+	if err := json.Unmarshal(forgotRec.Body.Bytes(), &forgotResp); err != nil {
+		t.Fatalf("decode forgot password response: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(forgotResp["message"]), "spam") {
+		t.Fatalf("expected forgot password response to mention spam folder, got %q", forgotResp["message"])
+	}
 	if len(testMailer.sent) != 1 {
 		t.Fatalf("expected one password reset email, got %d", len(testMailer.sent))
 	}

@@ -68,7 +68,7 @@ func (h *Handler) ForgotPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{
-		"message": "If that account exists, a password reset email has been sent.",
+		"message": "If that account exists, a password reset email has been sent. If you don't see it within a few minutes, please check your spam or junk folder.",
 	})
 }
 
