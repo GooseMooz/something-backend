@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/goosemooz/something-backend/config"
+	"github.com/goosemooz/something-backend/internal/admins"
 	"github.com/goosemooz/something-backend/internal/auth"
 	"github.com/goosemooz/something-backend/internal/db"
 	"github.com/goosemooz/something-backend/internal/mail"
@@ -35,12 +36,47 @@ type capturedResetEmail struct {
 	resetURL string
 }
 
+type capturedLaunchEmail struct {
+	to         string
+	appBaseURL string
+}
+
+type capturedCampaignEmail struct {
+	to      string
+	subject string
+	body    string
+}
+
+type capturedNotificationEmail struct {
+	to      string
+	subject string
+	body    string
+}
+
 type stubMailer struct {
-	sent []capturedResetEmail
+	sentLaunch       []capturedLaunchEmail
+	sentReset        []capturedResetEmail
+	sentCampaign     []capturedCampaignEmail
+	sentNotification []capturedNotificationEmail
 }
 
 func (m *stubMailer) SendPasswordReset(_ context.Context, to, resetURL string) error {
-	m.sent = append(m.sent, capturedResetEmail{to: to, resetURL: resetURL})
+	m.sentReset = append(m.sentReset, capturedResetEmail{to: to, resetURL: resetURL})
+	return nil
+}
+
+func (m *stubMailer) SendLaunchNotification(_ context.Context, to, appBaseURL string) error {
+	m.sentLaunch = append(m.sentLaunch, capturedLaunchEmail{to: to, appBaseURL: appBaseURL})
+	return nil
+}
+
+func (m *stubMailer) SendCampaign(_ context.Context, to, subject, body string) error {
+	m.sentCampaign = append(m.sentCampaign, capturedCampaignEmail{to: to, subject: subject, body: body})
+	return nil
+}
+
+func (m *stubMailer) SendNotification(_ context.Context, to, subject, body string) error {
+	m.sentNotification = append(m.sentNotification, capturedNotificationEmail{to: to, subject: subject, body: body})
 	return nil
 }
 
@@ -61,6 +97,7 @@ func TestMain(m *testing.M) {
 		RefreshTokenTTL:  30 * 24 * time.Hour,
 		PasswordResetTTL: time.Hour,
 		AppBaseURL:       "https://example.com",
+		CampaignAPIKey:   "campaign-test-key",
 	}
 	os.Exit(m.Run())
 }
@@ -99,6 +136,23 @@ func createOrg(t *testing.T, email string) (*orgs.Org, string) {
 		t.Fatalf("generate org token: %v", err)
 	}
 	return org, token
+}
+
+func createAdmin(t *testing.T, email string) (*admins.Admin, string) {
+	t.Helper()
+	hash, err := auth.HashPassword("admin-secret")
+	if err != nil {
+		t.Fatalf("hash admin password: %v", err)
+	}
+	admin, err := admins.NewService(testDB).Create(context.Background(), email, hash, "Admin "+email)
+	if err != nil {
+		t.Fatalf("create admin: %v", err)
+	}
+	token, err := auth.GenerateToken(admin.ID.String(), testCfg)
+	if err != nil {
+		t.Fatalf("generate admin token: %v", err)
+	}
+	return admin, token
 }
 
 func createOpportunity(t *testing.T, orgID string, title string) *opportunities.Opportunity {
@@ -260,6 +314,212 @@ func TestApplicationsRoutesEnforceRoles(t *testing.T) {
 	}
 }
 
+func TestAdminLoginAndRoutesRequireAdmin(t *testing.T) {
+	router := newRouter()
+	admin, _ := createAdmin(t, "admin-login@example.com")
+
+	loginRec := doJSONRequest(t, router, http.MethodPost, "/auth/admin/login", map[string]string{
+		"email":    admin.Email,
+		"password": "admin-secret",
+	}, "", "")
+	if loginRec.Code != http.StatusOK {
+		t.Fatalf("expected admin login to succeed, got %d: %s", loginRec.Code, loginRec.Body.String())
+	}
+
+	var loginBody map[string]any
+	if err := json.Unmarshal(loginRec.Body.Bytes(), &loginBody); err != nil {
+		t.Fatalf("unmarshal admin login body: %v", err)
+	}
+	if loginBody["access_token"] == "" {
+		t.Fatalf("expected access_token in admin login response, got %v", loginBody)
+	}
+
+	_, orgToken := createOrg(t, "admin-route-org-token@example.com")
+	forbiddenRec := doJSONRequest(t, router, http.MethodGet, "/admin/users", nil, orgToken, "")
+	if forbiddenRec.Code != http.StatusForbidden {
+		t.Fatalf("expected org token to be forbidden from admin route, got %d: %s", forbiddenRec.Code, forbiddenRec.Body.String())
+	}
+}
+
+func TestAdminCanVerifyOrgAndEditOpportunity(t *testing.T) {
+	router := newRouter()
+	_, adminToken := createAdmin(t, "admin-verify-edit@example.com")
+	org, _ := createOrg(t, "admin-verify-org@example.com")
+	opp := createOpportunity(t, org.ID.String(), "Admin Editable Opportunity")
+
+	verifyRec := doJSONRequest(t, router, http.MethodPut, "/admin/orgs/"+org.ID.ID.(string)+"/verification", map[string]bool{
+		"verified": true,
+	}, adminToken, "")
+	if verifyRec.Code != http.StatusOK {
+		t.Fatalf("expected org verification to succeed, got %d: %s", verifyRec.Code, verifyRec.Body.String())
+	}
+	if !strings.Contains(verifyRec.Body.String(), `"verified":true`) {
+		t.Fatalf("expected verified org response, got %s", verifyRec.Body.String())
+	}
+
+	listRec := doJSONRequest(t, router, http.MethodGet, "/admin/orgs?verified=true&search=admin-verify-org", nil, adminToken, "")
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("expected verified org list to succeed, got %d: %s", listRec.Code, listRec.Body.String())
+	}
+	if !strings.Contains(listRec.Body.String(), org.Email) {
+		t.Fatalf("expected verified org list to include %s, got %s", org.Email, listRec.Body.String())
+	}
+
+	updateRec := doJSONRequest(t, router, http.MethodPut, "/admin/opportunities/"+opp.ID.ID.(string), map[string]any{
+		"title":    "Admin Updated Opportunity",
+		"duration": 4.5,
+	}, adminToken, "")
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("expected admin opportunity update to succeed, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+	if !strings.Contains(updateRec.Body.String(), `"title":"Admin Updated Opportunity"`) {
+		t.Fatalf("expected updated opportunity title, got %s", updateRec.Body.String())
+	}
+}
+
+func TestAdminCanSeeAndManageOpportunityApplicants(t *testing.T) {
+	router := newRouter()
+	_, adminToken := createAdmin(t, "admin-applicants@example.com")
+	_, userToken := createUser(t, "admin-applicant-user@example.com")
+	org, _ := createOrg(t, "admin-applicant-org@example.com")
+	opp := createOpportunity(t, org.ID.String(), "Admin Applicant Review")
+
+	applyRec := doJSONRequest(t, router, http.MethodPost, "/opportunities/"+opp.ID.ID.(string)+"/apply", map[string]any{}, userToken, "")
+	if applyRec.Code != http.StatusCreated {
+		t.Fatalf("expected application creation, got %d: %s", applyRec.Code, applyRec.Body.String())
+	}
+
+	var createdApp map[string]any
+	if err := json.Unmarshal(applyRec.Body.Bytes(), &createdApp); err != nil {
+		t.Fatalf("unmarshal created application: %v", err)
+	}
+	appID := strings.TrimPrefix(createdApp["id"].(string), "applications:")
+
+	applicantsRec := doJSONRequest(t, router, http.MethodGet, "/admin/opportunities/"+opp.ID.ID.(string)+"/applications", nil, adminToken, "")
+	if applicantsRec.Code != http.StatusOK {
+		t.Fatalf("expected admin applicants list to succeed, got %d: %s", applicantsRec.Code, applicantsRec.Body.String())
+	}
+	if !strings.Contains(applicantsRec.Body.String(), "admin-applicant-user@example.com") {
+		t.Fatalf("expected applicants response to include applicant profile, got %s", applicantsRec.Body.String())
+	}
+
+	updateRec := doJSONRequest(t, router, http.MethodPut, "/admin/applications/"+appID, map[string]string{
+		"status": "accepted",
+	}, adminToken, "")
+	if updateRec.Code != http.StatusOK {
+		t.Fatalf("expected admin status update to succeed, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+	if !strings.Contains(updateRec.Body.String(), `"status":"accepted"`) || !strings.Contains(updateRec.Body.String(), `"spots_left":4`) {
+		t.Fatalf("expected accepted application with updated spots, got %s", updateRec.Body.String())
+	}
+}
+
+func TestAdminCampaignSendsCustomEmailToOrganizations(t *testing.T) {
+	mailer := &stubMailer{}
+	router := newRouterWithMailer(mailer)
+	_, adminToken := createAdmin(t, "admin-campaign@example.com")
+	_, _ = createOrg(t, "admin-campaign-org@example.com")
+
+	currentOrgs, err := orgs.NewService(testDB).List(context.Background())
+	if err != nil {
+		t.Fatalf("list orgs: %v", err)
+	}
+	expectedRecipients := make(map[string]struct{}, len(currentOrgs))
+	for _, org := range currentOrgs {
+		expectedRecipients[strings.ToLower(strings.TrimSpace(org.Email))] = struct{}{}
+	}
+
+	rec := doJSONRequest(t, router, http.MethodPost, "/admin/campaigns", map[string]string{
+		"audience": "orgs",
+		"subject":  "Volunteer fair update",
+		"body":     "Please update your booth details.",
+	}, adminToken, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected admin campaign to succeed, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Sent          int      `json:"sent"`
+		Skipped       int      `json:"skipped"`
+		InvalidEmails []string `json:"invalid_emails"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal campaign response: %v", err)
+	}
+	if resp.Sent != len(expectedRecipients) {
+		t.Fatalf("expected %d sent emails, got %d", len(expectedRecipients), resp.Sent)
+	}
+	if len(resp.InvalidEmails) != 0 {
+		t.Fatalf("expected no invalid emails, got %+v", resp.InvalidEmails)
+	}
+	if len(mailer.sentCampaign) != len(expectedRecipients) {
+		t.Fatalf("expected %d captured campaign emails, got %d", len(expectedRecipients), len(mailer.sentCampaign))
+	}
+	for _, sent := range mailer.sentCampaign {
+		if _, ok := expectedRecipients[sent.to]; !ok {
+			t.Fatalf("unexpected campaign recipient %q", sent.to)
+		}
+		if sent.subject != "Volunteer fair update" || sent.body != "Please update your booth details." {
+			t.Fatalf("unexpected campaign content: %+v", sent)
+		}
+	}
+}
+
+func TestLaunchCampaignSendsToUniqueValidEmails(t *testing.T) {
+	mailer := &stubMailer{}
+	router := newRouterWithMailer(mailer)
+
+	req := httptest.NewRequest(http.MethodPost, "/campaigns/launch", strings.NewReader(`{"emails":["Test@Example.com"," test@example.com ","invalid-email","","other@example.com"]}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Campaign-API-Key", testCfg.CampaignAPIKey)
+
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var resp struct {
+		Sent          int      `json:"sent"`
+		Skipped       int      `json:"skipped"`
+		InvalidEmails []string `json:"invalid_emails"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+	if resp.Sent != 2 {
+		t.Fatalf("expected 2 sent emails, got %d", resp.Sent)
+	}
+	if resp.Skipped != 3 {
+		t.Fatalf("expected 3 skipped emails, got %d", resp.Skipped)
+	}
+	if len(resp.InvalidEmails) != 1 || resp.InvalidEmails[0] != "invalid-email" {
+		t.Fatalf("expected invalid email list, got %+v", resp.InvalidEmails)
+	}
+	if len(mailer.sentLaunch) != 2 {
+		t.Fatalf("expected 2 launch emails, got %d", len(mailer.sentLaunch))
+	}
+	if mailer.sentLaunch[0].to != "test@example.com" || mailer.sentLaunch[1].to != "other@example.com" {
+		t.Fatalf("unexpected recipients: %+v", mailer.sentLaunch)
+	}
+	if mailer.sentLaunch[0].appBaseURL != testCfg.AppBaseURL {
+		t.Fatalf("expected app base url %q, got %q", testCfg.AppBaseURL, mailer.sentLaunch[0].appBaseURL)
+	}
+}
+
+func TestLaunchCampaignRequiresAPIKey(t *testing.T) {
+	router := newRouter()
+
+	rec := doJSONRequest(t, router, http.MethodPost, "/campaigns/launch", map[string]any{
+		"emails": []string{"person@example.com"},
+	}, "", "")
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestApplyMissingOpportunityReturnsNotFound(t *testing.T) {
 	router := newRouter()
 	_, token := createUser(t, "missing-opp-user@example.com")
@@ -404,6 +664,131 @@ func TestApplicationStatusUpdateReturnsUpdatedOpportunitySpots(t *testing.T) {
 	}
 	if !strings.Contains(updateRec.Body.String(), "\"spots_left\":4") {
 		t.Fatalf("expected updated opportunity spots_left in response, got %s", updateRec.Body.String())
+	}
+}
+
+func TestApplicationStatusAliasesRestoreSpotsAndNotifyUser(t *testing.T) {
+	mailer := &stubMailer{}
+	router := newRouterWithMailer(mailer)
+	user, userToken := createUser(t, "status-alias-user@example.com")
+	org, orgToken := createOrg(t, "status-alias-org@example.com")
+	opp := createOpportunity(t, org.ID.String(), "Alias Status Tracking")
+
+	applyRec := doJSONRequest(t, router, http.MethodPost, "/opportunities/"+opp.ID.ID.(string)+"/apply", map[string]any{}, userToken, "")
+	if applyRec.Code != http.StatusCreated {
+		t.Fatalf("expected application creation, got %d: %s", applyRec.Code, applyRec.Body.String())
+	}
+
+	var createdApp map[string]any
+	if err := json.Unmarshal(applyRec.Body.Bytes(), &createdApp); err != nil {
+		t.Fatalf("unmarshal created app: %v", err)
+	}
+	appID := strings.TrimPrefix(createdApp["id"].(string), "applications:")
+
+	acceptRec := doJSONRequest(t, router, http.MethodPut, "/applications/"+appID, map[string]string{"status": "approved"}, orgToken, "")
+	if acceptRec.Code != http.StatusOK {
+		t.Fatalf("expected approved alias to succeed, got %d: %s", acceptRec.Code, acceptRec.Body.String())
+	}
+	if !strings.Contains(acceptRec.Body.String(), `"status":"accepted"`) || !strings.Contains(acceptRec.Body.String(), `"spots_left":4`) {
+		t.Fatalf("expected accepted status and spots_left 4, got %s", acceptRec.Body.String())
+	}
+
+	rejectRec := doJSONRequest(t, router, http.MethodPut, "/applications/"+appID, map[string]string{"status": "declined"}, orgToken, "")
+	if rejectRec.Code != http.StatusOK {
+		t.Fatalf("expected declined alias to succeed, got %d: %s", rejectRec.Code, rejectRec.Body.String())
+	}
+	if !strings.Contains(rejectRec.Body.String(), `"status":"rejected"`) || !strings.Contains(rejectRec.Body.String(), `"spots_left":5`) {
+		t.Fatalf("expected rejected status and restored spots_left 5, got %s", rejectRec.Body.String())
+	}
+
+	reloadedOpp, err := opportunities.NewService(testDB).GetByID(context.Background(), opp.ID.ID.(string))
+	if err != nil {
+		t.Fatalf("reload opportunity: %v", err)
+	}
+	if reloadedOpp.SpotsLeft != 5 {
+		t.Fatalf("expected persisted spots_left 5, got %d", reloadedOpp.SpotsLeft)
+	}
+
+	if len(mailer.sentNotification) != 2 {
+		t.Fatalf("expected accepted and declined notifications, got %+v", mailer.sentNotification)
+	}
+	if mailer.sentNotification[0].to != user.Email || !strings.Contains(strings.ToLower(mailer.sentNotification[0].subject), "accepted") {
+		t.Fatalf("unexpected accepted notification: %+v", mailer.sentNotification[0])
+	}
+	if mailer.sentNotification[1].to != user.Email || !strings.Contains(strings.ToLower(mailer.sentNotification[1].body), "declined") {
+		t.Fatalf("unexpected declined notification: %+v", mailer.sentNotification[1])
+	}
+}
+
+func TestNotificationSettingsCanDisableAcceptedEmail(t *testing.T) {
+	mailer := &stubMailer{}
+	router := newRouterWithMailer(mailer)
+	user, userToken := createUser(t, "notification-settings-user@example.com")
+	org, orgToken := createOrg(t, "notification-settings-org@example.com")
+	opp := createOpportunity(t, org.ID.String(), "Muted Acceptance")
+
+	settingsRec := doJSONRequest(t, router, http.MethodPut, "/users/"+user.ID.ID.(string)+"/notification-settings", map[string]bool{
+		"application_accepted": false,
+	}, userToken, "")
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("expected settings update to succeed, got %d: %s", settingsRec.Code, settingsRec.Body.String())
+	}
+
+	applyRec := doJSONRequest(t, router, http.MethodPost, "/opportunities/"+opp.ID.ID.(string)+"/apply", map[string]any{}, userToken, "")
+	if applyRec.Code != http.StatusCreated {
+		t.Fatalf("expected application creation, got %d: %s", applyRec.Code, applyRec.Body.String())
+	}
+	var createdApp map[string]any
+	if err := json.Unmarshal(applyRec.Body.Bytes(), &createdApp); err != nil {
+		t.Fatalf("unmarshal created app: %v", err)
+	}
+	appID := strings.TrimPrefix(createdApp["id"].(string), "applications:")
+
+	acceptRec := doJSONRequest(t, router, http.MethodPut, "/applications/"+appID, map[string]string{"status": "accepted"}, orgToken, "")
+	if acceptRec.Code != http.StatusOK {
+		t.Fatalf("expected accept to succeed, got %d: %s", acceptRec.Code, acceptRec.Body.String())
+	}
+	if len(mailer.sentNotification) != 0 {
+		t.Fatalf("expected accepted notification to be disabled, got %+v", mailer.sentNotification)
+	}
+}
+
+func TestAcceptedWithdrawalNotifiesOrg(t *testing.T) {
+	mailer := &stubMailer{}
+	router := newRouterWithMailer(mailer)
+	_, userToken := createUser(t, "accepted-withdrawal-user@example.com")
+	org, orgToken := createOrg(t, "accepted-withdrawal-org@example.com")
+	opp := createOpportunity(t, org.ID.String(), "Accepted Withdrawal")
+
+	applyRec := doJSONRequest(t, router, http.MethodPost, "/opportunities/"+opp.ID.ID.(string)+"/apply", map[string]any{}, userToken, "")
+	if applyRec.Code != http.StatusCreated {
+		t.Fatalf("expected application creation, got %d: %s", applyRec.Code, applyRec.Body.String())
+	}
+	var createdApp map[string]any
+	if err := json.Unmarshal(applyRec.Body.Bytes(), &createdApp); err != nil {
+		t.Fatalf("unmarshal created app: %v", err)
+	}
+	appID := strings.TrimPrefix(createdApp["id"].(string), "applications:")
+
+	acceptRec := doJSONRequest(t, router, http.MethodPut, "/applications/"+appID, map[string]string{"status": "accepted"}, orgToken, "")
+	if acceptRec.Code != http.StatusOK {
+		t.Fatalf("expected accept to succeed, got %d: %s", acceptRec.Code, acceptRec.Body.String())
+	}
+
+	withdrawRec := doJSONRequest(t, router, http.MethodDelete, "/applications/"+appID, nil, userToken, "")
+	if withdrawRec.Code != http.StatusNoContent {
+		t.Fatalf("expected withdraw to succeed, got %d: %s", withdrawRec.Code, withdrawRec.Body.String())
+	}
+
+	foundOrgNotification := false
+	for _, sent := range mailer.sentNotification {
+		if sent.to == org.Email && strings.Contains(strings.ToLower(sent.subject), "withdrew") {
+			foundOrgNotification = true
+			break
+		}
+	}
+	if !foundOrgNotification {
+		t.Fatalf("expected accepted withdrawal notification to org, got %+v", mailer.sentNotification)
 	}
 }
 
@@ -694,11 +1079,11 @@ func TestForgotAndResetPasswordFlow(t *testing.T) {
 	if !strings.Contains(strings.ToLower(forgotResp["message"]), "spam") {
 		t.Fatalf("expected forgot password response to mention spam folder, got %q", forgotResp["message"])
 	}
-	if len(testMailer.sent) != 1 {
-		t.Fatalf("expected one password reset email, got %d", len(testMailer.sent))
+	if len(testMailer.sentReset) != 1 {
+		t.Fatalf("expected one password reset email, got %d", len(testMailer.sentReset))
 	}
 
-	resetURL := testMailer.sent[0].resetURL
+	resetURL := testMailer.sentReset[0].resetURL
 	token := ""
 	if idx := strings.Index(resetURL, "token="); idx != -1 {
 		token = resetURL[idx+len("token="):]
@@ -784,11 +1169,11 @@ func TestForgotAndResetPasswordFlowForOrg(t *testing.T) {
 	if forgotRec.Code != http.StatusOK {
 		t.Fatalf("expected forgot password to succeed, got %d: %s", forgotRec.Code, forgotRec.Body.String())
 	}
-	if len(testMailer.sent) != 1 {
-		t.Fatalf("expected one password reset email, got %d", len(testMailer.sent))
+	if len(testMailer.sentReset) != 1 {
+		t.Fatalf("expected one password reset email, got %d", len(testMailer.sentReset))
 	}
 
-	resetURL := testMailer.sent[0].resetURL
+	resetURL := testMailer.sentReset[0].resetURL
 	token := ""
 	if idx := strings.Index(resetURL, "token="); idx != -1 {
 		token = resetURL[idx+len("token="):]

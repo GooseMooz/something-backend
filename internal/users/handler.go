@@ -56,6 +56,13 @@ type changePasswordRequest struct {
 	NewPassword     string `json:"new_password"`
 }
 
+type updateNotificationSettingsRequest struct {
+	ApplicationAccepted *bool `json:"application_accepted"`
+	OpportunityReminder *bool `json:"opportunity_reminder"`
+	ApplicationDeclined *bool `json:"application_declined"`
+	OpportunityCanceled *bool `json:"opportunity_canceled"`
+}
+
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -269,6 +276,83 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "password updated, please sign in again",
 	})
+}
+
+func (h *Handler) GetNotificationSettings(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	claims := auth.GetClaims(r)
+	if claims.UserID != "users:"+id {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	user, err := h.service.GetByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if user == nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, user.NotificationSettings)
+}
+
+func (h *Handler) UpdateNotificationSettings(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	claims := auth.GetClaims(r)
+	if claims.UserID != "users:"+id {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	var req updateNotificationSettingsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	user, err := h.service.GetByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if user == nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	settings := user.NotificationSettings
+	updated := false
+	if req.ApplicationAccepted != nil {
+		settings.ApplicationAccepted = *req.ApplicationAccepted
+		updated = true
+	}
+	if req.OpportunityReminder != nil {
+		settings.OpportunityReminder = *req.OpportunityReminder
+		updated = true
+	}
+	if req.ApplicationDeclined != nil {
+		settings.ApplicationDeclined = *req.ApplicationDeclined
+		updated = true
+	}
+	if req.OpportunityCanceled != nil {
+		settings.OpportunityCanceled = *req.OpportunityCanceled
+		updated = true
+	}
+	if !updated {
+		writeError(w, http.StatusBadRequest, "no fields to update")
+		return
+	}
+
+	user, err = h.service.Update(r.Context(), id, map[string]any{"notification_settings": settings})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, user.NotificationSettings)
 }
 
 func (h *Handler) UploadPFP(w http.ResponseWriter, r *http.Request) {

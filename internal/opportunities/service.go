@@ -115,6 +115,14 @@ func (s *Service) Delete(ctx context.Context, id, orgID string) error {
 }
 
 func (s *Service) Update(ctx context.Context, id, orgID string, updates map[string]any) (*Opportunity, error) {
+	return s.update(ctx, id, orgID, false, updates)
+}
+
+func (s *Service) UpdateAsAdmin(ctx context.Context, id string, updates map[string]any) (*Opportunity, error) {
+	return s.update(ctx, id, "", true, updates)
+}
+
+func (s *Service) update(ctx context.Context, id, orgID string, skipOwnershipCheck bool, updates map[string]any) (*Opportunity, error) {
 	rid := models.NewRecordID("opportunities", id)
 	opp, err := surrealdb.Select[Opportunity](ctx, s.db.Client, rid)
 	if err != nil {
@@ -123,7 +131,7 @@ func (s *Service) Update(ctx context.Context, id, orgID string, updates map[stri
 	if opp == nil {
 		return nil, ErrNotFound
 	}
-	if opp.OrgID.String() != orgID {
+	if !skipOwnershipCheck && opp.OrgID.String() != orgID {
 		return nil, ErrForbidden
 	}
 

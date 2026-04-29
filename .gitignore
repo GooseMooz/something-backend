@@ -29,6 +29,7 @@ go.work.sum
 
 # env file
 .env
+docker-compose.override.yml
 
 # Application Data
 data/

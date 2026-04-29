@@ -153,6 +153,21 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	claims := auth.GetClaims(r)
 
+	opp, err := h.service.GetByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if opp == nil {
+		writeError(w, http.StatusNotFound, "opportunity not found")
+		return
+	}
+	if opp.OrgID.String() != claims.UserID {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+	h.appService.NotifyOpportunityCanceled(r.Context(), id)
+
 	if err := h.service.Delete(r.Context(), id, claims.UserID); err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeError(w, http.StatusNotFound, "opportunity not found")

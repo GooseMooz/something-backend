@@ -85,3 +85,18 @@ func RequireUserAuth(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+// RequireAdminAuth must be chained after RequireAuth. It rejects requests
+// whose token does not belong to an admin account.
+func RequireAdminAuth(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		claims := GetClaims(r)
+		if claims == nil || !strings.HasPrefix(claims.UserID, "admins:") {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"error":"admins only"}`))
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

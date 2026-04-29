@@ -5,6 +5,8 @@ import (
 	"log"
 
 	"github.com/goosemooz/something-backend/config"
+	"github.com/goosemooz/something-backend/internal/admins"
+	"github.com/goosemooz/something-backend/internal/auth"
 	"github.com/goosemooz/something-backend/internal/db"
 	"github.com/goosemooz/something-backend/internal/mail"
 	"github.com/goosemooz/something-backend/internal/server"
@@ -29,13 +31,27 @@ func main() {
 	}
 	log.Println("Schema applied")
 
+	if cfg.AdminEmail != "" || cfg.AdminPassword != "" {
+		if cfg.AdminEmail == "" || cfg.AdminPassword == "" {
+			log.Fatal("ADMIN_EMAIL and ADMIN_PASSWORD must both be set to bootstrap an admin account")
+		}
+		hash, err := auth.HashPassword(cfg.AdminPassword)
+		if err != nil {
+			log.Fatalf("Admin password hash failed: %v", err)
+		}
+		if _, err := admins.NewService(database).EnsureDefault(context.Background(), cfg.AdminEmail, hash, cfg.AdminName); err != nil {
+			log.Fatalf("Admin bootstrap failed: %v", err)
+		}
+		log.Printf("Admin account ensured for %s", cfg.AdminEmail)
+	}
+
 	store, err := storage.New(cfg)
 	if err != nil {
 		log.Fatalf("S3 init failed: %v", err)
 	}
 
 	var mailer mail.Mailer
-	if cfg.SMTPHost != "" && cfg.SMTPUsername != "" && cfg.SMTPPassword != "" && cfg.SMTPFrom != "" && cfg.AppBaseURL != "" {
+	if cfg.SMTPHost != "" && cfg.SMTPUsername != "" && cfg.SMTPPassword != "" && cfg.SMTPFrom != "" {
 		smtpMailer, err := mail.NewSMTPMailer(cfg)
 		if err != nil {
 			log.Fatalf("SMTP init failed: %v", err)

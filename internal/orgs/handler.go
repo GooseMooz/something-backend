@@ -54,6 +54,12 @@ type changePasswordRequest struct {
 	NewPassword     string `json:"new_password"`
 }
 
+type updateNotificationSettingsRequest struct {
+	ApplicantDigest          *bool   `json:"applicant_digest"`
+	ApplicantDigestFrequency *string `json:"applicant_digest_frequency"`
+	AcceptedWithdrawal       *bool   `json:"accepted_withdrawal"`
+}
+
 func (h *Handler) Register(w http.ResponseWriter, r *http.Request) {
 	var req registerRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -275,6 +281,85 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message": "password updated, please sign in again",
 	})
+}
+
+func (h *Handler) GetNotificationSettings(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	claims := auth.GetClaims(r)
+	if claims.UserID != "orgs:"+id {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	org, err := h.service.GetByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if org == nil {
+		writeError(w, http.StatusNotFound, "org not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, org.NotificationSettings)
+}
+
+func (h *Handler) UpdateNotificationSettings(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	claims := auth.GetClaims(r)
+	if claims.UserID != "orgs:"+id {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	var req updateNotificationSettingsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	org, err := h.service.GetByID(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if org == nil {
+		writeError(w, http.StatusNotFound, "org not found")
+		return
+	}
+
+	settings := org.NotificationSettings
+	updated := false
+	if req.ApplicantDigest != nil {
+		settings.ApplicantDigest = *req.ApplicantDigest
+		updated = true
+	}
+	if req.ApplicantDigestFrequency != nil {
+		frequency := strings.TrimSpace(*req.ApplicantDigestFrequency)
+		if frequency != "daily" && frequency != "weekly" {
+			writeError(w, http.StatusBadRequest, "applicant_digest_frequency must be daily or weekly")
+			return
+		}
+		settings.ApplicantDigestFrequency = frequency
+		updated = true
+	}
+	if req.AcceptedWithdrawal != nil {
+		settings.AcceptedWithdrawal = *req.AcceptedWithdrawal
+		updated = true
+	}
+	if !updated {
+		writeError(w, http.StatusBadRequest, "no fields to update")
+		return
+	}
+
+	settings = NormalizeNotificationSettings(settings)
+	org, err = h.service.Update(r.Context(), id, map[string]any{"notification_settings": settings})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, org.NotificationSettings)
 }
 
 func (h *Handler) UploadPFP(w http.ResponseWriter, r *http.Request) {

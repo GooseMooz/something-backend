@@ -62,12 +62,13 @@ func (h *Handler) UpdateStatus(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Status != StatusAccepted && req.Status != StatusRejected {
+	status, ok := ParseDecisionStatus(req.Status)
+	if !ok {
 		writeError(w, http.StatusBadRequest, "status must be 'accepted' or 'rejected'")
 		return
 	}
 
-	app, err := h.service.UpdateStatusDetailed(r.Context(), id, claims.UserID, req.Status)
+	app, err := h.service.UpdateStatusDetailed(r.Context(), id, claims.UserID, status)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			writeError(w, http.StatusNotFound, "application not found")

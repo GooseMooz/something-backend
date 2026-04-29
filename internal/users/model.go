@@ -24,6 +24,22 @@ type PublicProfile struct {
 	UpdatedAt  time.Time      `json:"updated_at"`
 }
 
+type NotificationSettings struct {
+	ApplicationAccepted bool `json:"application_accepted"`
+	OpportunityReminder bool `json:"opportunity_reminder"`
+	ApplicationDeclined bool `json:"application_declined"`
+	OpportunityCanceled bool `json:"opportunity_canceled"`
+}
+
+func DefaultNotificationSettings() NotificationSettings {
+	return NotificationSettings{
+		ApplicationAccepted: true,
+		OpportunityReminder: true,
+		ApplicationDeclined: true,
+		OpportunityCanceled: true,
+	}
+}
+
 func (u *User) Public() PublicProfile {
 	return PublicProfile{
 		ID:         u.ID,
@@ -43,21 +59,22 @@ func (u *User) Public() PublicProfile {
 }
 
 type User struct {
-	ID           types.RecordID `json:"id"`
-	Email        string    `json:"email"`
-	PasswordHash string    `json:"-" cbor:"password_hash"`
-	Name         string    `json:"name"`
-	Skills       []string  `json:"skills"`
-	Bio          string    `json:"bio,omitempty"`
-	Categories   []string  `json:"categories"`
-	Intensity    string    `json:"intensity"`
-	Phone        string    `json:"phone,omitempty"`
-	XP           int       `json:"xp"`
-	Instagram    string    `json:"instagram,omitempty"`
-	LinkedIn     string    `json:"linkedin,omitempty"`
-	S3PFP        string    `json:"s3_pfp,omitempty"`
-	S3PDF        string    `json:"s3_pdf,omitempty"`
-	Badges       []string  `json:"badges"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID                   types.RecordID       `json:"id"`
+	Email                string               `json:"email"`
+	PasswordHash         string               `json:"-" cbor:"password_hash"`
+	Name                 string               `json:"name"`
+	Skills               []string             `json:"skills"`
+	Bio                  string               `json:"bio,omitempty"`
+	Categories           []string             `json:"categories"`
+	Intensity            string               `json:"intensity"`
+	Phone                string               `json:"phone,omitempty"`
+	XP                   int                  `json:"xp"`
+	Instagram            string               `json:"instagram,omitempty"`
+	LinkedIn             string               `json:"linkedin,omitempty"`
+	S3PFP                string               `json:"s3_pfp,omitempty"`
+	S3PDF                string               `json:"s3_pdf,omitempty"`
+	Badges               []string             `json:"badges"`
+	NotificationSettings NotificationSettings `json:"notification_settings"`
+	CreatedAt            time.Time            `json:"created_at"`
+	UpdatedAt            time.Time            `json:"updated_at"`
 }

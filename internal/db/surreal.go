@@ -52,6 +52,9 @@ func (d *DB) ApplySchema(ctx context.Context) error {
 	if err := d.migrateOpportunityData(ctx); err != nil {
 		return fmt.Errorf("failed to migrate opportunity data: %w", err)
 	}
+	if err := d.migrateNotificationSettings(ctx); err != nil {
+		return fmt.Errorf("failed to migrate notification settings: %w", err)
+	}
 	return nil
 }
 
@@ -125,6 +128,68 @@ func (d *DB) acceptedApplicationsCount(ctx context.Context, opportunityID string
 		return 0, nil
 	}
 	return (*results)[0].Result[0].Count, nil
+}
+
+func (d *DB) migrateNotificationSettings(ctx context.Context) error {
+	userSettings := map[string]any{
+		"application_accepted": true,
+		"opportunity_reminder": true,
+		"application_declined": true,
+		"opportunity_canceled": true,
+	}
+	if _, err := surrealdb.Query[[]map[string]any](ctx, d.Client,
+		"UPDATE users SET notification_settings = $settings WHERE notification_settings = NONE",
+		map[string]any{"settings": userSettings}); err != nil {
+		return fmt.Errorf("migrate user notification settings: %w", err)
+	}
+	userSettingFields := []string{
+		"application_accepted",
+		"opportunity_reminder",
+		"application_declined",
+		"opportunity_canceled",
+	}
+	for _, field := range userSettingFields {
+		query := fmt.Sprintf("UPDATE users SET notification_settings.%s = true WHERE notification_settings.%s = NONE", field, field)
+		if _, err := surrealdb.Query[[]map[string]any](ctx, d.Client, query, map[string]any{}); err != nil {
+			return fmt.Errorf("migrate user notification setting %s: %w", field, err)
+		}
+	}
+
+	orgSettings := map[string]any{
+		"applicant_digest":           true,
+		"applicant_digest_frequency": "daily",
+		"accepted_withdrawal":        true,
+	}
+	if _, err := surrealdb.Query[[]map[string]any](ctx, d.Client,
+		"UPDATE orgs SET verified = false, notification_settings = $settings WHERE verified = NONE AND notification_settings = NONE",
+		map[string]any{"settings": orgSettings}); err != nil {
+		return fmt.Errorf("migrate org verified and notification settings: %w", err)
+	}
+	if _, err := surrealdb.Query[[]map[string]any](ctx, d.Client,
+		"UPDATE orgs SET verified = false WHERE verified = NONE",
+		map[string]any{}); err != nil {
+		return fmt.Errorf("migrate org verified: %w", err)
+	}
+	if _, err := surrealdb.Query[[]map[string]any](ctx, d.Client,
+		"UPDATE orgs SET notification_settings = $settings WHERE notification_settings = NONE",
+		map[string]any{"settings": orgSettings}); err != nil {
+		return fmt.Errorf("migrate org notification settings: %w", err)
+	}
+
+	if _, err := surrealdb.Query[[]map[string]any](ctx, d.Client,
+		"UPDATE orgs SET notification_settings.applicant_digest_frequency = 'daily' WHERE notification_settings.applicant_digest_frequency = NONE",
+		map[string]any{}); err != nil {
+		return fmt.Errorf("migrate org notification frequency: %w", err)
+	}
+	orgBoolSettingFields := []string{"applicant_digest", "accepted_withdrawal"}
+	for _, field := range orgBoolSettingFields {
+		query := fmt.Sprintf("UPDATE orgs SET notification_settings.%s = true WHERE notification_settings.%s = NONE", field, field)
+		if _, err := surrealdb.Query[[]map[string]any](ctx, d.Client, query, map[string]any{}); err != nil {
+			return fmt.Errorf("migrate org notification setting %s: %w", field, err)
+		}
+	}
+
+	return nil
 }
 
 func normalizeDuration(v any) (float64, bool) {

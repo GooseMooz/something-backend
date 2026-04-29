@@ -21,15 +21,17 @@ func NewService(db *db.DB) *Service {
 func (s *Service) Create(ctx context.Context, name, passwordHash, email, location string) (*Org, error) {
 	now := time.Now().UTC()
 	_, err := surrealdb.Create[Org](ctx, s.db.Client, "orgs", map[string]any{
-		"name":          name,
-		"password_hash": passwordHash,
-		"email":         email,
-		"location":      location,
-		"categories":    []string{},
-		"description":   "",
-		"s3_pfp":        "",
-		"created_at":    now,
-		"updated_at":    now,
+		"name":                  name,
+		"password_hash":         passwordHash,
+		"email":                 email,
+		"location":              location,
+		"categories":            []string{},
+		"description":           "",
+		"s3_pfp":                "",
+		"verified":              false,
+		"notification_settings": DefaultNotificationSettings(),
+		"created_at":            now,
+		"updated_at":            now,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create org: %w", err)
