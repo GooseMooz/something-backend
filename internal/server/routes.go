@@ -5,8 +5,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/goosemooz/something-backend/config"
+	"github.com/goosemooz/something-backend/internal/admins"
 	"github.com/goosemooz/something-backend/internal/applications"
 	"github.com/goosemooz/something-backend/internal/auth"
+	"github.com/goosemooz/something-backend/internal/campaigns"
 	"github.com/goosemooz/something-backend/internal/db"
 	"github.com/goosemooz/something-backend/internal/mail"
 	"github.com/goosemooz/something-backend/internal/opportunities"
@@ -20,11 +22,16 @@ func SetupRoutes(r chi.Router, database *db.DB, cfg *config.Config, store *stora
 	sessionManager := auth.NewSessionManager(database, cfg)
 	resetManager := auth.NewPasswordResetManager(database, cfg, mailer, sessionManager)
 	authHandler := auth.NewHandler(sessionManager, resetManager)
-	userHandler := users.NewHandler(users.NewService(database), cfg, store, sessionManager)
-	orgHandler := orgs.NewHandler(orgs.NewService(database), cfg, store, sessionManager)
-	appService := applications.NewService(database)
-	oppHandler := opportunities.NewHandler(opportunities.NewService(database), appService)
+	userService := users.NewService(database)
+	orgService := orgs.NewService(database)
+	appService := applications.NewService(database).WithMailer(mailer)
+	oppService := opportunities.NewService(database)
+	userHandler := users.NewHandler(userService, cfg, store, sessionManager)
+	orgHandler := orgs.NewHandler(orgService, cfg, store, sessionManager)
+	oppHandler := opportunities.NewHandler(oppService, appService)
 	appHandler := applications.NewHandler(appService)
+	campaignHandler := campaigns.NewHandler(cfg, mailer)
+	adminHandler := admins.NewHandler(admins.NewService(database), userService, orgService, oppService, appService, mailer, sessionManager)
 
 	// Auth
 	r.Route("/auth", func(r chi.Router) {
@@ -39,6 +46,9 @@ func SetupRoutes(r chi.Router, database *db.DB, cfg *config.Config, store *stora
 			r.With(ratelimit.NewIPRateLimiter(5, time.Minute)).Post("/register", orgHandler.Register)
 			r.With(ratelimit.NewIPRateLimiter(10, time.Minute)).Post("/login", orgHandler.Login)
 		})
+		r.Route("/admin", func(r chi.Router) {
+			r.With(ratelimit.NewIPRateLimiter(10, time.Minute)).Post("/login", adminHandler.Login)
+		})
 	})
 
 	// Users
@@ -50,6 +60,8 @@ func SetupRoutes(r chi.Router, database *db.DB, cfg *config.Config, store *stora
 			r.Use(auth.RequireUserAuth)
 			r.Put("/{id}", userHandler.Update)
 			r.Put("/{id}/password", userHandler.ChangePassword)
+			r.Get("/{id}/notification-settings", userHandler.GetNotificationSettings)
+			r.Put("/{id}/notification-settings", userHandler.UpdateNotificationSettings)
 			r.Post("/{id}/pfp", userHandler.UploadPFP)
 			r.Post("/{id}/resume", userHandler.UploadResume)
 		})
@@ -67,6 +79,8 @@ func SetupRoutes(r chi.Router, database *db.DB, cfg *config.Config, store *stora
 			r.Get("/{id}/applications", appHandler.ListByOrg)
 			r.Put("/{id}", orgHandler.Update)
 			r.Put("/{id}/password", orgHandler.ChangePassword)
+			r.Get("/{id}/notification-settings", orgHandler.GetNotificationSettings)
+			r.Put("/{id}/notification-settings", orgHandler.UpdateNotificationSettings)
 			r.Post("/{id}/pfp", orgHandler.UploadPFP)
 		})
 	})
@@ -102,5 +116,24 @@ func SetupRoutes(r chi.Router, database *db.DB, cfg *config.Config, store *stora
 			r.Use(auth.RequireOrgAuth)
 			r.Put("/{id}", appHandler.UpdateStatus)
 		})
+	})
+
+	r.Route("/campaigns", func(r chi.Router) {
+		r.With(ratelimit.NewIPRateLimiter(2, time.Minute)).Post("/launch", campaignHandler.SendLaunchNotification)
+	})
+
+	r.Route("/admin", func(r chi.Router) {
+		r.Use(auth.RequireAuth(cfg))
+		r.Use(auth.RequireAdminAuth)
+
+		r.Get("/users", adminHandler.ListUsers)
+		r.Get("/orgs", adminHandler.ListOrgs)
+		r.Put("/orgs/{id}/verification", adminHandler.SetOrgVerification)
+		r.Get("/opportunities", adminHandler.ListOpportunities)
+		r.Put("/opportunities/{id}", adminHandler.UpdateOpportunity)
+		r.Get("/opportunities/{id}/applications", adminHandler.ListOpportunityApplications)
+		r.Get("/applications", adminHandler.ListApplications)
+		r.Put("/applications/{id}", adminHandler.UpdateApplicationStatus)
+		r.Post("/campaigns", adminHandler.SendCampaign)
 	})
 }

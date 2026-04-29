@@ -22,19 +22,20 @@ func NewService(db *db.DB) *Service {
 func (s *Service) Create(ctx context.Context, email, passwordHash, name string) (*User, error) {
 	now := time.Now().UTC()
 	_, err := surrealdb.Create[User](ctx, s.db.Client, "users", map[string]any{
-		"email":         email,
-		"password_hash": passwordHash,
-		"name":          name,
-		"skills":        []string{},
-		"bio":           "",
-		"categories":    []string{},
-		"intensity":     "low",
-		"xp":            0,
-		"s3_pfp":        "",
-		"s3_pdf":        "",
-		"badges":        []string{},
-		"created_at":    now,
-		"updated_at":    now,
+		"email":                 email,
+		"password_hash":         passwordHash,
+		"name":                  name,
+		"skills":                []string{},
+		"bio":                   "",
+		"categories":            []string{},
+		"intensity":             "low",
+		"xp":                    0,
+		"s3_pfp":                "",
+		"s3_pdf":                "",
+		"badges":                []string{},
+		"notification_settings": DefaultNotificationSettings(),
+		"created_at":            now,
+		"updated_at":            now,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create user: %w", err)
@@ -65,6 +66,19 @@ func (s *Service) GetByID(ctx context.Context, id string) (*User, error) {
 		return nil, fmt.Errorf("failed to query user: %w", err)
 	}
 	return result, nil
+}
+
+func (s *Service) List(ctx context.Context) ([]User, error) {
+	results, err := surrealdb.Query[[]User](ctx, s.db.Client,
+		"SELECT * FROM users ORDER BY created_at DESC",
+		map[string]any{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list users: %w", err)
+	}
+	if len(*results) == 0 {
+		return []User{}, nil
+	}
+	return (*results)[0].Result, nil
 }
 
 func (s *Service) Update(ctx context.Context, id string, updates map[string]any) (*User, error) {

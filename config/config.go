@@ -28,12 +28,17 @@ type Config struct {
 	S3AccessKey string
 	S3SecretKey string
 
-	SMTPHost     string
-	SMTPPort     int
-	SMTPUsername string
-	SMTPPassword string
-	SMTPFrom     string
-	AppBaseURL   string
+	SMTPHost       string
+	SMTPPort       int
+	SMTPUsername   string
+	SMTPPassword   string
+	SMTPFrom       string
+	AppBaseURL     string
+	CampaignAPIKey string
+
+	AdminEmail    string
+	AdminPassword string
+	AdminName     string
 }
 
 func Load() *Config {
@@ -58,12 +63,17 @@ func Load() *Config {
 		S3AccessKey: mustGetEnv("S3_ACCESS_KEY"),
 		S3SecretKey: mustGetEnv("S3_SECRET_KEY"),
 
-		SMTPHost:     os.Getenv("SMTP_HOST"),
-		SMTPPort:     getIntEnv("SMTP_PORT", 587),
-		SMTPUsername: os.Getenv("SMTP_USERNAME"),
-		SMTPPassword: os.Getenv("SMTP_PASSWORD"),
-		SMTPFrom:     os.Getenv("SMTP_FROM"),
-		AppBaseURL:   os.Getenv("APP_BASE_URL"),
+		SMTPHost:       os.Getenv("SMTP_HOST"),
+		SMTPPort:       getIntEnv("SMTP_PORT", 587),
+		SMTPUsername:   os.Getenv("SMTP_USERNAME"),
+		SMTPPassword:   os.Getenv("SMTP_PASSWORD"),
+		SMTPFrom:       os.Getenv("SMTP_FROM"),
+		AppBaseURL:     os.Getenv("APP_BASE_URL"),
+		CampaignAPIKey: os.Getenv("CAMPAIGN_API_KEY"),
+
+		AdminEmail:    os.Getenv("ADMIN_EMAIL"),
+		AdminPassword: os.Getenv("ADMIN_PASSWORD"),
+		AdminName:     getEnv("ADMIN_NAME", "Admin"),
 	}
 	return cfg
 }
@@ -110,4 +120,12 @@ func getIntEnv(key string, fallback int) int {
 		panic(fmt.Sprintf("Invalid int env var %q: %v", key, err))
 	}
 	return parsed
+}
+
+func getEnv(key, fallback string) string {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	return v
 }

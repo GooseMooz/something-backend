@@ -1,29 +1,42 @@
 services:
   api:
-    build: .
-    ports:
-      - "${PORT}:${PORT}"
+    image: ghcr.io/goosemooz/something-backend:latest
+    container_name: something-backend-api
+    restart: unless-stopped
     env_file:
       - ./.env
     depends_on:
       surrealdb:
         condition: service_healthy
+    networks:
+      - traefik-public
+      - internal
+    labels:
+      - "traefik.enable=false"
 
   surrealdb:
     image: surrealdb/surrealdb:latest
+    container_name: something-backend-surrealdb
+    restart: unless-stopped
     user: root
     command: start --log warn --user ${SURREAL_USER} --pass ${SURREAL_PASSWORD} surrealkv:/data/db
     healthcheck:
       test: ["CMD", "/surreal", "isready", "--endpoint", "http://localhost:8000"]
-      interval: 5s
+      interval: 10s
       timeout: 5s
       retries: 5
-    ports:
-      - "8000:8000"
+    networks:
+      - internal
     volumes:
       - surreal_data:/data
     env_file:
       - ./.env
+
+networks:
+  traefik-public:
+    external: true
+  internal:
+    internal: true
 
 volumes:
   surreal_data:

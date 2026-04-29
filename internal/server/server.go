@@ -1,13 +1,16 @@
 package server
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/goosemooz/something-backend/config"
+	"github.com/goosemooz/something-backend/internal/applications"
 	"github.com/goosemooz/something-backend/internal/db"
 	"github.com/goosemooz/something-backend/internal/mail"
 	"github.com/goosemooz/something-backend/internal/storage"
@@ -31,6 +34,7 @@ func New(cfg *config.Config, database *db.DB, store *storage.Storage, mailer mai
 	}
 	s.setupMiddleware()
 	SetupRoutes(s.router, database, cfg, store, mailer)
+	s.startNotificationScheduler()
 	return s
 }
 
@@ -58,4 +62,30 @@ func (s *Server) Start() error {
 		IdleTimeout:       60 * time.Second,
 	}
 	return srv.ListenAndServe()
+}
+
+func (s *Server) startNotificationScheduler() {
+	if s.mailer == nil {
+		return
+	}
+
+	appService := applications.NewService(s.db).WithMailer(s.mailer)
+	go func() {
+		run := func() {
+			now := time.Now().UTC()
+			if err := appService.SendDueOpportunityReminders(context.Background(), now); err != nil {
+				log.Printf("opportunity reminder scheduler failed: %v", err)
+			}
+			if err := appService.SendApplicantDigests(context.Background(), now); err != nil {
+				log.Printf("applicant digest scheduler failed: %v", err)
+			}
+		}
+
+		run()
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for range ticker.C {
+			run()
+		}
+	}()
 }

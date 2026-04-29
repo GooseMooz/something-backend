@@ -1,1 +1,15 @@
-
+.git
+.github
+.gocache
+.idea
+.claude
+data
+tmp
+*.log
+*.out
+*.test
+coverage*
+.DS_Store
+docker-compose.yml
+README.md
+LICENSE
