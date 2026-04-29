@@ -53,6 +53,23 @@ type updateStatusRequest struct {
 	Status applications.Status `json:"status"`
 }
 
+type opportunityCreateRequest struct {
+	OrgID         string                   `json:"org_id"`
+	Title         string                   `json:"title"`
+	Category      string                   `json:"category"`
+	Difficulty    opportunities.Difficulty `json:"difficulty"`
+	Description   string                   `json:"description"`
+	Date          time.Time                `json:"date"`
+	Duration      float64                  `json:"duration"`
+	Location      string                   `json:"location"`
+	MaxSpots      int                      `json:"max_spots"`
+	Recurring     string                   `json:"recurring"`
+	DropIn        bool                     `json:"drop_in"`
+	EventLink     string                   `json:"event_link"`
+	ResourcesLink string                   `json:"resources_link"`
+	Tags          []string                 `json:"tags"`
+}
+
 type opportunityUpdateRequest struct {
 	Title         *string                   `json:"title"`
 	Category      *string                   `json:"category"`
@@ -219,6 +236,73 @@ func (h *Handler) ListOpportunities(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, opp)
 	}
 	writeJSON(w, http.StatusOK, filtered)
+}
+
+func (h *Handler) CreateOpportunity(w http.ResponseWriter, r *http.Request) {
+	var req opportunityCreateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	orgID := strings.TrimSpace(req.OrgID)
+	if pathOrgID := strings.TrimSpace(chi.URLParam(r, "id")); pathOrgID != "" {
+		if orgID != "" && !matchesRecordID("orgs:"+pathOrgID, orgID, "orgs") {
+			writeError(w, http.StatusBadRequest, "body org_id must match path org id")
+			return
+		}
+		orgID = pathOrgID
+	}
+
+	orgBareID, ok := bareRecordID(orgID, "orgs")
+	if !ok {
+		writeError(w, http.StatusBadRequest, "org_id is required")
+		return
+	}
+
+	org, err := h.orgSvc.GetByID(r.Context(), orgBareID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if org == nil {
+		writeError(w, http.StatusNotFound, "org not found")
+		return
+	}
+
+	if strings.TrimSpace(req.Title) == "" || strings.TrimSpace(req.Category) == "" || strings.TrimSpace(req.Description) == "" || req.Duration <= 0 || strings.TrimSpace(req.Location) == "" || req.MaxSpots <= 0 {
+		writeError(w, http.StatusBadRequest, "org_id, title, category, description, positive duration, location and positive max_spots are required")
+		return
+	}
+	if req.Date.IsZero() {
+		writeError(w, http.StatusBadRequest, "date is required")
+		return
+	}
+	if !req.Date.After(time.Now()) {
+		writeError(w, http.StatusBadRequest, "date must be in the future")
+		return
+	}
+
+	opp, err := h.oppSvc.Create(r.Context(), "orgs:"+orgBareID, opportunities.Opportunity{
+		Title:         req.Title,
+		Category:      req.Category,
+		Difficulty:    req.Difficulty,
+		Description:   req.Description,
+		Date:          req.Date,
+		Duration:      req.Duration,
+		Location:      req.Location,
+		MaxSpots:      req.MaxSpots,
+		Recurring:     req.Recurring,
+		DropIn:        req.DropIn,
+		EventLink:     req.EventLink,
+		ResourcesLink: req.ResourcesLink,
+		Tags:          req.Tags,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusCreated, opp)
 }
 
 func (h *Handler) UpdateOpportunity(w http.ResponseWriter, r *http.Request) {
@@ -537,6 +621,21 @@ func matchesRecordID(actual, wanted, table string) bool {
 		wanted = table + ":" + wanted
 	}
 	return actual == wanted
+}
+
+func bareRecordID(value, table string) (string, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", false
+	}
+	if strings.Contains(value, ":") {
+		parts := strings.SplitN(value, ":", 2)
+		if len(parts) != 2 || parts[0] != table || strings.TrimSpace(parts[1]) == "" {
+			return "", false
+		}
+		return parts[1], true
+	}
+	return value, true
 }
 
 func isListStatus(status applications.Status) bool {

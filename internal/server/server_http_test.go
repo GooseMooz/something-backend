@@ -377,6 +377,80 @@ func TestAdminCanVerifyOrgAndEditOpportunity(t *testing.T) {
 	}
 }
 
+func TestAdminCanCreateOpportunityForExistingOrg(t *testing.T) {
+	router := newRouter()
+	_, adminToken := createAdmin(t, "admin-create-opp@example.com")
+	org, _ := createOrg(t, "admin-create-opp-org@example.com")
+
+	rec := doJSONRequest(t, router, http.MethodPost, "/admin/opportunities", map[string]any{
+		"org_id":      org.ID.String(),
+		"title":       "Admin Posted Opportunity",
+		"category":    "environment",
+		"difficulty":  1,
+		"description": "Posted by admin on behalf of org",
+		"date":        time.Now().Add(48 * time.Hour).Format(time.RFC3339),
+		"duration":    2.5,
+		"location":    "Vancouver",
+		"max_spots":   7,
+		"tags":        []string{"admin-posted"},
+	}, adminToken, "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected admin opportunity creation to succeed, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"title":"Admin Posted Opportunity"`) || !strings.Contains(rec.Body.String(), org.ID.String()) {
+		t.Fatalf("expected created opportunity for org, got %s", rec.Body.String())
+	}
+
+	orgOppsRec := doJSONRequest(t, router, http.MethodGet, "/orgs/"+org.ID.ID.(string)+"/opportunities", nil, "", "")
+	if orgOppsRec.Code != http.StatusOK {
+		t.Fatalf("expected org opportunities list to succeed, got %d: %s", orgOppsRec.Code, orgOppsRec.Body.String())
+	}
+	if !strings.Contains(orgOppsRec.Body.String(), `"title":"Admin Posted Opportunity"`) {
+		t.Fatalf("expected org opportunities to include admin-created opportunity, got %s", orgOppsRec.Body.String())
+	}
+}
+
+func TestAdminCreateOpportunityForOrgPath(t *testing.T) {
+	router := newRouter()
+	_, adminToken := createAdmin(t, "admin-create-opp-path@example.com")
+	org, _ := createOrg(t, "admin-create-opp-path-org@example.com")
+
+	rec := doJSONRequest(t, router, http.MethodPost, "/admin/orgs/"+org.ID.ID.(string)+"/opportunities", map[string]any{
+		"title":       "Path Scoped Admin Opportunity",
+		"category":    "community",
+		"description": "Posted from org detail screen",
+		"date":        time.Now().Add(72 * time.Hour).Format(time.RFC3339),
+		"duration":    1.5,
+		"location":    "Vancouver",
+		"max_spots":   4,
+	}, adminToken, "")
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected path-scoped admin opportunity creation to succeed, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"title":"Path Scoped Admin Opportunity"`) || !strings.Contains(rec.Body.String(), org.ID.String()) {
+		t.Fatalf("expected created opportunity for path org, got %s", rec.Body.String())
+	}
+}
+
+func TestAdminCreateOpportunityRequiresExistingOrg(t *testing.T) {
+	router := newRouter()
+	_, adminToken := createAdmin(t, "admin-create-opp-missing-org@example.com")
+
+	rec := doJSONRequest(t, router, http.MethodPost, "/admin/opportunities", map[string]any{
+		"org_id":      "orgs:missing",
+		"title":       "Missing Org Opportunity",
+		"category":    "environment",
+		"description": "Should fail",
+		"date":        time.Now().Add(48 * time.Hour).Format(time.RFC3339),
+		"duration":    2,
+		"location":    "Vancouver",
+		"max_spots":   5,
+	}, adminToken, "")
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected missing org to return 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestAdminCanSeeAndManageOpportunityApplicants(t *testing.T) {
 	router := newRouter()
 	_, adminToken := createAdmin(t, "admin-applicants@example.com")
